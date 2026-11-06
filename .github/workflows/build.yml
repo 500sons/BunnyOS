@@ -1,4 +1,4 @@
-name: Build BunnyOS ISO (Rock-Solid)
+name: Build BunnyOS ISO
 
 on:
   workflow_dispatch:
@@ -22,25 +22,22 @@ jobs:
 
       - name: Build BunnyOS Live System
         run: |
-          mkdir -p ~/bunnyos/chroot
-          cd ~/bunnyos
-
           # 1. Разворачиваем чистую базу Debian 12
           sudo debootstrap --arch=amd64 --variant=minbase bookworm chroot http://deb.debian.org/debian/
 
-          # 2. Настраиваем репозитории внутри системы
+          # 2. Настраиваем репозитории
           sudo tee chroot/etc/apt/sources.list << 'EOF'
           deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware
           deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware
           deb http://security.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware
           EOF
 
-          # 3. Монтируем системные директории для работы chroot
+          # 3. Монтируем системные разделы
           sudo mount --bind /dev chroot/dev
           sudo mount --bind /proc chroot/proc
           sudo mount --bind /sys chroot/sys
 
-          # 4. Устанавливаем ядро, рабочий стол и весь софт BunnyOS
+          # 4. Устанавливаем софт и скрипты BunnyOS
           sudo chroot chroot /bin/bash -c "
             export DEBIAN_FRONTEND=noninteractive
             dpkg --add-architecture i386
@@ -53,7 +50,7 @@ jobs:
               kdeconnect bleachbit arc-theme papirus-icon-theme \
               gamemode steam-installer mesa-vulkan-drivers mesa-vulkan-drivers:i386
 
-            # Создаем системные скрипты фишек BunnyOS
+            # Bunny Hop (Турбо-режим)
             cat << 'HOP' > /usr/local/bin/bunny-hop
           #!/bin/bash
           STATE=\"/tmp/bunny_hop_active\"
@@ -71,6 +68,7 @@ jobs:
           fi
           HOP
 
+            # Ghost Mode
             cat << 'GHOST' > /usr/local/bin/bunny-ghost
           #!/bin/bash
           IFACE=\$(ip route | grep default | awk '{print \$5}' | head -n 1)
@@ -82,6 +80,7 @@ jobs:
           fi
           GHOST
 
+            # Clean Carrot
             cat << 'CLEAN' > /usr/local/bin/clean-carrot
           #!/bin/bash
           apt-get clean
@@ -91,7 +90,7 @@ jobs:
 
             chmod +x /usr/local/bin/bunny-hop /usr/local/bin/bunny-ghost /usr/local/bin/clean-carrot
 
-            # Настройка пользователя по умолчанию для Live-режима
+            # Настройка пользователя Live-сессии
             useradd -m -s /bin/bash -G sudo bunny
             echo 'bunny:bunny' | chpasswd
             echo 'bunny ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
@@ -99,28 +98,26 @@ jobs:
             apt-get clean
           "
 
-          # 5. Размонтируем пути
+          # 5. Размонтирование
           sudo umount -lf chroot/dev chroot/proc chroot/sys
 
-          # 6. Упаковка Live-образа
+          # 6. Сборка Squashfs и загрузчика
           mkdir -p image/live image/boot/grub
           sudo mksquashfs chroot image/live/filesystem.squashfs -comp xz
 
-          # Копируем ядро и initrd
           sudo cp chroot/boot/vmlinuz-* image/live/vmlinuz
           sudo cp chroot/boot/initrd.img-* image/live/initrd
 
-          # Конфиг загрузчика GRUB
           cat << 'EOF' | tee image/boot/grub/grub.cfg
           set default=0
           set timeout=5
-          menuentry "BunnyOS Live (Default)" {
+          menuentry "BunnyOS Live" {
               linux /live/vmlinuz boot=live quiet splash
               initrd /live/initrd
           }
           EOF
 
-          # Создание финального гибридного ISO
+          # Создание файла строго в текущей рабочей директории
           grub-mkrescue -o BunnyOS-Pro.iso image/
 
       - name: Upload BunnyOS ISO
