@@ -1,0 +1,128 @@
+name: Build BunnyOS ISO
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo apt-get clean
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Build Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debootstrap squashfs-tools xorriso grub-pc-bin grub-efi-amd64-bin mtools dosfstools
+
+      - name: Build BunnyOS Live System
+        run: |
+          # 1. Разворачиваем чистую базу Debian 12
+          sudo debootstrap --arch=amd64 --variant=minbase bookworm chroot http://deb.debian.org/debian/
+
+          # 2. Настраиваем репозитории
+          sudo tee chroot/etc/apt/sources.list << 'EOF'
+          deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware
+          deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware
+          deb http://security.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware
+          EOF
+
+          # 3. Монтируем системные разделы
+          sudo mount --bind /dev chroot/dev
+          sudo mount --bind /proc chroot/proc
+          sudo mount --bind /sys chroot/sys
+
+          # 4. Устанавливаем софт и скрипты BunnyOS
+          sudo chroot chroot /bin/bash -c "
+            export DEBIAN_FRONTEND=noninteractive
+            dpkg --add-architecture i386
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              linux-image-amd64 live-boot systemd-sysv sudo \
+              xorg xfce4 xfce4-goodies lightdm network-manager-gnome \
+              firefox-esr chromium vlc audacious flameshot \
+              wireguard openvpn macchanger ufw timeshift diodon \
+              kdeconnect bleachbit arc-theme papirus-icon-theme \
+              gamemode steam-installer mesa-vulkan-drivers mesa-vulkan-drivers:i386
+
+            # Bunny Hop (Турбо-режим)
+            cat << 'HOP' > /usr/local/bin/bunny-hop
+          #!/bin/bash
+          STATE=\"/tmp/bunny_hop_active\"
+          if [ ! -f \"\$STATE\" ]; then
+              touch \"\$STATE\"
+              pkill -STOP -f \"firefox-esr\" 2>/dev/null
+              pkill -STOP -f \"chromium\" 2>/dev/null
+              sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
+              notify-send \"🐇 Bunny Hop\" \"Турбо-режим ВКЛЮЧЕН!\" -i dialog-information
+          else
+              rm -f \"\$STATE\"
+              pkill -CONT -f \"firefox-esr\" 2>/dev/null
+              pkill -CONT -f \"chromium\" 2>/dev/null
+              notify-send \"🐇 Bunny Hop\" \"Турбо-режим ВЫКЛЮЧЕН.\" -i dialog-information
+          fi
+          HOP
+
+            # Ghost Mode
+            cat << 'GHOST' > /usr/local/bin/bunny-ghost
+          #!/bin/bash
+          IFACE=\$(ip route | grep default | awk '{print \$5}' | head -n 1)
+          if [ -n \"\$IFACE\" ]; then
+              ip link set \"\$IFACE\" down
+              macchanger -r \"\$IFACE\"
+              ip link set \"\$IFACE\" up
+              notify-send \"👻 Ghost Mode\" \"MAC-адрес успешно подменен!\" -i security-high
+          fi
+          GHOST
+
+            # Clean Carrot
+            cat << 'CLEAN' > /usr/local/bin/clean-carrot
+          #!/bin/bash
+          apt-get clean
+          rm -rf ~/.cache/thumbnails/* 2>/dev/null
+          notify-send \"🥕 Clean Carrot\" \"Система очищена!\" -i dialog-information
+          CLEAN
+
+            chmod +x /usr/local/bin/bunny-hop /usr/local/bin/bunny-ghost /usr/local/bin/clean-carrot
+
+            # Настройка пользователя Live-сессии
+            useradd -m -s /bin/bash -G sudo bunny
+            echo 'bunny:bunny' | chpasswd
+            echo 'bunny ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+
+            apt-get clean
+          "
+
+          # 5. Размонтирование
+          sudo umount -lf chroot/dev chroot/proc chroot/sys
+
+          # 6. Сборка Squashfs и загрузчика
+          mkdir -p image/live image/boot/grub
+          sudo mksquashfs chroot image/live/filesystem.squashfs -comp xz
+
+          sudo cp chroot/boot/vmlinuz-* image/live/vmlinuz
+          sudo cp chroot/boot/initrd.img-* image/live/initrd
+
+          cat << 'EOF' | tee image/boot/grub/grub.cfg
+          set default=0
+          set timeout=5
+          menuentry "BunnyOS Live" {
+              linux /live/vmlinuz boot=live quiet splash
+              initrd /live/initrd
+          }
+          EOF
+
+          # Создание файла строго в текущей рабочей директории
+          grub-mkrescue -o BunnyOS-Pro.iso image/
+
+      - name: Upload BunnyOS ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: BunnyOS-Pro-ISO
+          path: BunnyOS-Pro.iso
+          retention-days: 3
