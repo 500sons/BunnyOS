@@ -1,0 +1,33 @@
+name: Build BunnyOS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt update
+          sudo apt install -y live-build isolinux xorriso
+
+      - name: Build ISO
+        run: |
+          mkdir -p build && cd build
+          sudo lb config --distribution bookworm \
+                         --architecture amd64 \
+                         --archive-areas "main contrib non-free non-free-firmware"
+          mkdir -p config/package-lists
+          echo "xfce4 xfce4-terminal thunar lightdm wireguard openvpn network-manager-gnome firefox-esr chromium vlc steam-installer mesa-vulkan-drivers libreoffice-calc libreoffice-writer flameshot" | sudo tee config/package-lists/bunnyos.list.chroot
+          sudo lb build
+          mv live-image-amd64.hybrid.iso BunnyOS.iso
+
+      - name: Upload ISO Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BunnyOS-ISO
+          path: build/BunnyOS.iso
