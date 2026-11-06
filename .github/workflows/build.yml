@@ -1,4 +1,4 @@
-name: Build BunnyOS
+name: Build BunnyOS ISO
 
 on:
   workflow_dispatch:
@@ -12,17 +12,34 @@ jobs:
 
       - name: Install build tools
         run: |
+          sudo dpkg --add-architecture i386
           sudo apt update
-          sudo apt install -y live-build isolinux xorriso
+          sudo apt install -y live-build isolinux xorriso debootstrap
 
       - name: Build ISO
         run: |
           mkdir -p build && cd build
-          sudo lb config --distribution bookworm \
-                         --architecture amd64 \
-                         --archive-areas "main contrib non-free non-free-firmware"
+          sudo lb config \
+            --distribution bookworm \
+            --architecture amd64 \
+            --archive-areas "main contrib non-free non-free-firmware" \
+            --bootloader syslinux
+          
           mkdir -p config/package-lists
-          echo "xfce4 xfce4-terminal thunar lightdm wireguard openvpn network-manager-gnome firefox-esr chromium vlc steam-installer mesa-vulkan-drivers libreoffice-calc libreoffice-writer flameshot" | sudo tee config/package-lists/bunnyos.list.chroot
+          cat << 'EOF' | sudo tee config/package-lists/bunnyos.list.chroot
+          xfce4
+          xfce4-terminal
+          thunar
+          firefox-esr
+          chromium
+          vlc
+          wireguard
+          openvpn
+          network-manager-gnome
+          flameshot
+          steam-installer
+          EOF
+
           sudo lb build
           mv live-image-amd64.hybrid.iso BunnyOS.iso
 
